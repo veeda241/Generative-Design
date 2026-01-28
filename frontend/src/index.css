@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+@theme {
+  --font-outfit: "Outfit", sans-serif;
+
+  --color-prime-50: #f0f9ff;
+  --color-prime-100: #e0f2fe;
+  --color-prime-200: #bae6fd;
+  --color-prime-300: #7dd3fc;
+  --color-prime-400: #38bdf8;
+  --color-prime-500: #0ea5e9;
+  --color-prime-600: #0284c7;
+  --color-prime-700: #0369a1;
+  --color-prime-800: #075985;
+  --color-prime-900: #0c4a6e;
+  --color-prime-950: #082f49;
+  --color-accent: #0CEF8F;
+  --color-danger: #FF4D4D;
+
+  --animate-pulse-slow: pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@layer base {
+  :root {
+    font-family: var(--font-outfit);
+    background-color: #020617;
+    color: #f8fafc;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  .glass-card {
+    background: rgba(15, 23, 42, 0.4);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .gradient-text {
+    background: linear-gradient(135deg, #38bdf8 0%, #0CEF8F 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .glow-btn {
+    position: relative;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .glow-btn:hover {
+    box-shadow: 0 0 25px rgba(14, 165, 233, 0.4);
+    filter: brightness(1.1);
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.1);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.2);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(56, 189, 248, 0.4);
+}

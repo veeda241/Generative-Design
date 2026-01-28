@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AETHER-GEN Real-Time Performance Monitor</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap"
+        rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-primary: #050810;
+            --bg-secondary: #0d1117;
+            --bg-card: #161b22;
+            --bg-card-hover: #1c2128;
+            --text-primary: #f0f6fc;
+            --text-secondary: #8b949e;
+            --text-muted: #484f58;
+            --accent-blue: #58a6ff;
+            --accent-cyan: #39d4d4;
+            --accent-green: #3fb950;
+            --accent-yellow: #d29922;
+            --accent-orange: #db6d28;
+            --accent-red: #f85149;
+            --accent-purple: #a371f7;
+            --accent-pink: #db61a2;
+            --border-color: #30363d;
+            --glow-blue: rgba(88, 166, 255, 0.15);
+            --glow-green: rgba(63, 185, 80, 0.15);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Animated Background */
+        .bg-grid {
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(88, 166, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(88, 166, 255, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            z-index: -1;
+        }
+
+        .bg-glow {
+            position: fixed;
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            filter: blur(150px);
+            opacity: 0.3;
+            z-index: -1;
+            animation: pulse 8s ease-in-out infinite;
+        }
+
+        .bg-glow-1 {
+            top: -200px;
+            left: -200px;
+            background: var(--accent-blue);
+        }
+
+        .bg-glow-2 {
+            bottom: -200px;
+            right: -200px;
+            background: var(--accent-purple);
+            animation-delay: 4s;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 0.2;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: 0.4;
+                transform: scale(1.1);
+            }
+        }
+
+        /* Header */
+        .header {
+            padding: 1.5rem 2rem;
+            background: rgba(13, 17, 23, 0.8);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+        }
+
+        .logo h1 {
+            font-size: 1.25rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: blink 2s infinite;
+        }
+
+        .status-dot.online {
+            background: var(--accent-green);
+            box-shadow: 0 0 10px var(--accent-green);
+        }
+
+        .status-dot.warning {
+            background: var(--accent-yellow);
+        }
+
+        .status-dot.offline {
+            background: var(--accent-red);
+        }
+
+        @keyframes blink {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        /* Main Container */
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* Real-time Cards Grid */
+        .realtime-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .rt-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.25rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .rt-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-cyan));
+        }
+
+        .rt-card.green::before {
+            background: linear-gradient(90deg, var(--accent-green), var(--accent-cyan));
+        }
+
+        .rt-card.purple::before {
+            background: linear-gradient(90deg, var(--accent-purple), var(--accent-pink));
+        }
+
+        .rt-card.yellow::before {
+            background: linear-gradient(90deg, var(--accent-yellow), var(--accent-orange));
+        }
+
+        .rt-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 0.5rem;
+        }
+
+        .rt-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+
+        .rt-change {
+            font-size: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .rt-change.positive {
+            color: var(--accent-green);
+        }
+
+        .rt-change.negative {
+            color: var(--accent-red);
+        }
+
+        /* Live Charts Section */
+        .charts-section {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .chart-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .chart-title {
+            font-size: 1rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .chart-title .live-badge {
+            font-size: 0.65rem;
+            background: var(--accent-red);
+            color: white;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            animation: blink 1.5s infinite;
+        }
+
+        .time-range {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .time-btn {
+            padding: 0.4rem 0.75rem;
+            font-size: 0.75rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .time-btn:hover,
+        .time-btn.active {
+            background: var(--accent-blue);
+            border-color: var(--accent-blue);
+            color: white;
+        }
+
+        /* Metrics Table */
+        .metrics-table {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .metrics-table-header {
+            padding: 1rem 1.5rem;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .metrics-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 0.9rem;
+            transition: background 0.2s;
+        }
+
+        .metrics-row:hover {
+            background: var(--bg-card-hover);
+        }
+
+        .metrics-row:last-child {
+            border-bottom: none;
+        }
+
+        .metric-name {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .metric-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+        }
+
+        .metric-icon.cpu {
+            background: rgba(88, 166, 255, 0.15);
+        }
+
+        .metric-icon.gpu {
+            background: rgba(63, 185, 80, 0.15);
+        }
+
+        .metric-icon.mem {
+            background: rgba(163, 113, 247, 0.15);
+        }
+
+        .metric-icon.net {
+            background: rgba(219, 97, 40, 0.15);
+        }
+
+        .metric-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+        }
+
+        .metric-bar {
+            height: 6px;
+            background: var(--bg-secondary);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 0.5rem;
+        }
+
+        .metric-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.5s ease-out;
+        }
+
+        /* Logs Section */
+        .logs-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+        }
+
+        .logs-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .logs-header {
+            padding: 1rem 1.5rem;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logs-body {
+            height: 300px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            padding: 1rem;
+        }
+
+        .log-entry {
+            padding: 0.5rem 0;
+            border-bottom: 1px solid rgba(48, 54, 61, 0.5);
+            display: flex;
+            gap: 1rem;
+        }
+
+        .log-time {
+            color: var(--text-muted);
+            min-width: 80px;
+        }
+
+        .log-level {
+            min-width: 50px;
+            font-weight: 600;
+        }
+
+        .log-level.info {
+            color: var(--accent-blue);
+        }
+
+        .log-level.success {
+            color: var(--accent-green);
+        }
+
+        .log-level.warn {
+            color: var(--accent-yellow);
+        }
+
+        .log-level.error {
+            color: var(--accent-red);
+        }
+
+        .log-message {
+            color: var(--text-secondary);
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 3px;
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .realtime-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .charts-section {
+                grid-template-columns: 1fr;
+            }
+
+            .logs-section {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .realtime-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .header {
+                flex-direction: column;
+                gap: 1rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="bg-grid"></div>
+    <div class="bg-glow bg-glow-1"></div>
+    <div class="bg-glow bg-glow-2"></div>
+
+    <header class="header">
+        <div class="logo">
+            <div class="logo-icon">⚡</div>
+            <div>
+                <h1>AETHER-GEN</h1>
+                <span style="font-size: 0.7rem; color: var(--text-muted);">Real-Time Performance Monitor</span>
+            </div>
+        </div>
+        <div class="status-bar">
+            <div class="status-item">
+                <span class="status-dot online"></span>
+                <span>Backend Online</span>
+            </div>
+            <div class="status-item">
+                <span class="status-dot online"></span>
+                <span>GPU Active</span>
+            </div>
+            <div class="status-item" id="uptime">
+                <span>⏱️ Uptime: 3h 35m</span>
+            </div>
+            <div class="status-item" id="clock">
+                <span>🕐 --:--:--</span>
+            </div>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- Real-time Metrics Cards -->
+        <div class="realtime-grid">
+            <div class="rt-card">
+                <div class="rt-label">Requests / min</div>
+                <div class="rt-value" id="rpm" style="color: var(--accent-blue);">0</div>
+                <div class="rt-change positive" id="rpm-change">↑ +12% from last min</div>
+            </div>
+            <div class="rt-card green">
+                <div class="rt-label">Avg Response Time</div>
+                <div class="rt-value" id="response-time" style="color: var(--accent-green);">0ms</div>
+                <div class="rt-change positive" id="rt-change">↓ -5ms improvement</div>
+            </div>
+            <div class="rt-card purple">
+                <div class="rt-label">Active Generations</div>
+                <div class="rt-value" id="active-gen" style="color: var(--accent-purple);">0</div>
+                <div class="rt-change" style="color: var(--text-muted);">GPU Queue: 0</div>
+            </div>
+            <div class="rt-card yellow">
+                <div class="rt-label">Error Rate</div>
+                <div class="rt-value" id="error-rate" style="color: var(--accent-green);">0%</div>
+                <div class="rt-change positive">✓ All systems healthy</div>
+            </div>
+        </div>
+
+        <!-- Live Charts -->
+        <div class="charts-section">
+            <div class="chart-panel">
+                <div class="chart-header">
+                    <div class="chart-title">
+                        📈 Request Throughput
+                        <span class="live-badge">LIVE</span>
+                    </div>
+                    <div class="time-range">
+                        <button class="time-btn active">1m</button>
+                        <button class="time-btn">5m</button>
+                        <button class="time-btn">15m</button>
+                        <button class="time-btn">1h</button>
+                    </div>
+                </div>
+                <canvas id="throughputChart" height="120"></canvas>
+            </div>
+            <div class="chart-panel">
+                <div class="chart-header">
+                    <div class="chart-title">
+                        ⚡ Response Time Distribution
+                    </div>
+                </div>
+                <canvas id="responseChart" height="200"></canvas>
+            </div>
+        </div>
+
+        <!-- System Metrics Table -->
+        <div class="metrics-table" style="margin-bottom: 2rem;">
+            <div class="metrics-table-header">
+                🖥️ System Resources
+            </div>
+            <div class="metrics-row"
+                style="background: var(--bg-secondary); font-weight: 600; color: var(--text-secondary);">
+                <div>Resource</div>
+                <div>Current</div>
+                <div>Peak</div>
+                <div>Trend</div>
+            </div>
+            <div class="metrics-row">
+                <div class="metric-name">
+                    <div class="metric-icon cpu">💻</div>
+                    <div>
+                        <div>CPU Usage</div>
+                        <div class="metric-bar" style="width: 100px;">
+                            <div class="metric-bar-fill" id="cpu-bar"
+                                style="width: 18%; background: var(--accent-blue);"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="metric-value" id="cpu-current" style="color: var(--accent-blue);">18.4%</div>
+                <div class="metric-value" style="color: var(--text-muted);">42.1%</div>
+                <div style="color: var(--accent-green);">↓ Stable</div>
+            </div>
+            <div class="metrics-row">
+                <div class="metric-name">
+                    <div class="metric-icon gpu">🎮</div>
+                    <div>
+                        <div>GPU Usage (RTX 3050)</div>
+                        <div class="metric-bar" style="width: 100px;">
+                            <div class="metric-bar-fill" id="gpu-bar"
+                                style="width: 78%; background: var(--accent-green);"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="metric-value" id="gpu-current" style="color: var(--accent-green);">78.3%</div>
+                <div class="metric-value" style="color: var(--text-muted);">95.2%</div>
+                <div style="color: var(--accent-yellow);">↑ Active</div>
+            </div>
+            <div class="metrics-row">
+                <div class="metric-name">
+                    <div class="metric-icon mem">🧠</div>
+                    <div>
+                        <div>VRAM Usage</div>
+                        <div class="metric-bar" style="width: 100px;">
+                            <div class="metric-bar-fill" id="vram-bar"
+                                style="width: 60%; background: var(--accent-purple);"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="metric-value" id="vram-current" style="color: var(--accent-purple);">4.8 GB</div>
+                <div class="metric-value" style="color: var(--text-muted);">6.2 GB</div>
+                <div style="color: var(--accent-green);">↓ Optimal</div>
+            </div>
+            <div class="metrics-row">
+                <div class="metric-name">
+                    <div class="metric-icon net">🌐</div>
+                    <div>
+                        <div>Network I/O</div>
+                        <div class="metric-bar" style="width: 100px;">
+                            <div class="metric-bar-fill" id="net-bar"
+                                style="width: 25%; background: var(--accent-orange);"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="metric-value" id="net-current" style="color: var(--accent-orange);">2.4 MB/s</div>
+                <div class="metric-value" style="color: var(--text-muted);">15.8 MB/s</div>
+                <div style="color: var(--accent-green);">↓ Normal</div>
+            </div>
+        </div>
+
+        <!-- Logs Section -->
+        <div class="logs-section">
+            <div class="logs-panel">
+                <div class="logs-header">
+                    <span>📋 API Logs</span>
+                    <span style="font-size: 0.75rem; color: var(--text-muted);">Last 50 entries</span>
+                </div>
+                <div class="logs-body" id="api-logs">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+            <div class="logs-panel">
+                <div class="logs-header">
+                    <span>🎨 Point-E Generation Logs</span>
+                    <span style="font-size: 0.75rem; color: var(--text-muted);">GPU Activity</span>
+                </div>
+                <div class="logs-body" id="gen-logs">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Chart.js defaults
+        Chart.defaults.color = '#8b949e';
+        Chart.defaults.borderColor = '#30363d';
+
+        // Throughput Chart (Line)
+        const throughputCtx = document.getElementById('throughputChart').getContext('2d');
+        const throughputData = Array(60).fill(0).map(() => Math.floor(Math.random() * 20 + 10));
+
+        const throughputChart = new Chart(throughputCtx, {
+            type: 'line',
+            data: {
+                labels: Array(60).fill('').map((_, i) => `${60 - i}s`),
+                datasets: [{
+                    label: 'Requests',
+                    data: throughputData,
+                    borderColor: '#58a6ff',
+                    backgroundColor: 'rgba(88, 166, 255, 0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 0,
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { display: false },
+                    y: { beginAtZero: true, grid: { color: '#30363d' } }
+                },
+                animation: { duration: 300 }
+            }
+        });
+
+        // Response Time Chart (Doughnut)
+        const responseCtx = document.getElementById('responseChart').getContext('2d');
+        new Chart(responseCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['< 100ms', '100-500ms', '500ms-1s', '> 1s'],
+                datasets: [{
+                    data: [65, 25, 8, 2],
+                    backgroundColor: ['#3fb950', '#58a6ff', '#d29922', '#f85149'],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { position: 'bottom', labels: { padding: 15 } }
+                },
+                cutout: '60%'
+            }
+        });
+
+        // Real-time data simulation
+        function updateMetrics() {
+            // RPM
+            const rpm = Math.floor(Math.random() * 30 + 15);
+            document.getElementById('rpm').textContent = rpm;
+
+            // Response Time
+            const rt = Math.floor(Math.random() * 50 + 80);
+            document.getElementById('response-time').textContent = rt + 'ms';
+
+            // Active Generations
+            const activeGen = Math.floor(Math.random() * 3);
+            document.getElementById('active-gen').textContent = activeGen;
+
+            // Error Rate
+            const errorRate = (Math.random() * 0.5).toFixed(2);
+            document.getElementById('error-rate').textContent = errorRate + '%';
+
+            // CPU
+            const cpu = (Math.random() * 15 + 12).toFixed(1);
+            document.getElementById('cpu-current').textContent = cpu + '%';
+            document.getElementById('cpu-bar').style.width = cpu + '%';
+
+            // GPU
+            const gpu = (Math.random() * 20 + 70).toFixed(1);
+            document.getElementById('gpu-current').textContent = gpu + '%';
+            document.getElementById('gpu-bar').style.width = gpu + '%';
+
+            // VRAM
+            const vram = (Math.random() * 1 + 4).toFixed(1);
+            document.getElementById('vram-current').textContent = vram + ' GB';
+            document.getElementById('vram-bar').style.width = (vram / 8 * 100) + '%';
+
+            // Network
+            const net = (Math.random() * 3 + 1).toFixed(1);
+            document.getElementById('net-current').textContent = net + ' MB/s';
+            document.getElementById('net-bar').style.width = (net / 20 * 100) + '%';
+
+            // Update throughput chart
+            throughputChart.data.datasets[0].data.push(rpm);
+            throughputChart.data.datasets[0].data.shift();
+            throughputChart.update('none');
+        }
+
+        // Clock
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('clock').innerHTML = `<span>🕐 ${now.toLocaleTimeString()}</span>`;
+        }
+
+        // Log entries
+        const apiEndpoints = [
+            { method: 'GET', path: '/', status: 200 },
+            { method: 'POST', path: '/generate', status: 200 },
+            { method: 'POST', path: '/generate-points', status: 200 },
+            { method: 'POST', path: '/consult', status: 200 },
+            { method: 'GET', path: '/exports/design.dxf', status: 200 }
+        ];
+
+        const genMessages = [
+            'Initializing Point-E on cuda...',
+            'Loading base40M-textvec model...',
+            'Generating 4096 points...',
+            'Sampling step 32/64...',
+            'Point cloud generation complete!',
+            'GPU memory cleared',
+            'Waiting for next request...'
+        ];
+
+        function addApiLog() {
+            const logsDiv = document.getElementById('api-logs');
+            const endpoint = apiEndpoints[Math.floor(Math.random() * apiEndpoints.length)];
+            const time = new Date().toLocaleTimeString();
+            const latency = Math.floor(Math.random() * 100 + 10);
+
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `
+                <span class="log-time">${time}</span>
+                <span class="log-level ${endpoint.status === 200 ? 'success' : 'error'}">${endpoint.status}</span>
+                <span class="log-message">${endpoint.method} ${endpoint.path} (${latency}ms)</span>
+            `;
+
+            logsDiv.insertBefore(entry, logsDiv.firstChild);
+            if (logsDiv.children.length > 50) logsDiv.removeChild(logsDiv.lastChild);
+        }
+
+        function addGenLog() {
+            const logsDiv = document.getElementById('gen-logs');
+            const message = genMessages[Math.floor(Math.random() * genMessages.length)];
+            const time = new Date().toLocaleTimeString();
+            const level = message.includes('complete') ? 'success' : (message.includes('Error') ? 'error' : 'info');
+
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `
+                <span class="log-time">${time}</span>
+                <span class="log-level ${level}">${level.toUpperCase()}</span>
+                <span class="log-message">${message}</span>
+            `;
+
+            logsDiv.insertBefore(entry, logsDiv.firstChild);
+            if (logsDiv.children.length > 50) logsDiv.removeChild(logsDiv.lastChild);
+        }
+
+        // Initialize
+        updateClock();
+        setInterval(updateClock, 1000);
+        setInterval(updateMetrics, 2000);
+        setInterval(addApiLog, 3000);
+        setInterval(addGenLog, 5000);
+
+        // Initial logs
+        for (let i = 0; i < 10; i++) {
+            addApiLog();
+            addGenLog();
+        }
+    </script>
+</body>
+
+</html>

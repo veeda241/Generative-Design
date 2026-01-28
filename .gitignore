@@ -1,0 +1,35 @@
+# Large model files
+*.pt
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Node / JS
+node_modules/
+dist/
+build/
+.npm
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Generated outputs / Artifacts
+exports/
+backend/exports/
+backend/uploads/
+uploads/
+*.dxf
+
+# IDEs
+.vscode/
+.idea/

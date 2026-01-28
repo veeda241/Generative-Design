@@ -1,0 +1,41 @@
+# AETHER-GEN Docker Compose Configuration
+# Run: docker-compose up
+
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DEVICE=cuda
+      - PORT=8000
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./backend/exports:/app/exports
+      - ./backend/point_e_model_cache:/app/point_e_model_cache
+    command: python main.py
+    networks:
+      - aether-network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - aether-network
+    restart: unless-stopped
+
+networks:
+  aether-network:
+    driver: bridge
