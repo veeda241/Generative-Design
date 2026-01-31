@@ -27,10 +27,13 @@ AETHER-GEN is a cutting-edge generative engineering platform that combines:
 | Feature | Description |
 |---------|-------------|
 | 🎨 **3D Point Cloud Generation** | Generate 3D models from text prompts using Point-E on GPU |
+| 🖨️ **3D Printing Export** | Export as print-ready STL/3MF with automatic mesh conversion |
+| 🔧 **Print Optimization** | Wall thickness validation, orientation optimization, support estimation |
+| 🏭 **Printer Profiles** | Pre-configured profiles for Ender 3, Prusa MK3S, Bambu X1, and more |
 | 🏗️ **Engineering Design** | Create pumps, tanks, pipes, valves, and filters |
 | 📊 **Real-time Metrics** | Cost estimation, power calculations, compliance checks |
 | 💬 **AI Design Auditor** | Chat with AI about your design for engineering insights |
-| 📁 **CAD Export** | Download designs as DXF files for CAD software |
+| 📁 **CAD Export** | Download designs as DXF, PLY, OBJ files for CAD software |
 | 🌐 **BIM Support** | IFC file upload and parsing (optional) |
 
 ## 🚀 Quick Start
@@ -157,6 +160,7 @@ VITE_API_URL=http://localhost:8001
 
 ## 🖥️ API Endpoints
 
+### Core Endpoints
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/` | Health check |
@@ -165,6 +169,17 @@ VITE_API_URL=http://localhost:8001
 | POST | `/consult` | AI design consultation |
 | POST | `/export-point-cloud` | Export to PLY/OBJ/JSON |
 | POST | `/upload-ifc` | Upload BIM/IFC file |
+
+### 3D Printing Endpoints
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/printing/printers` | Get available printer profiles |
+| GET | `/printing/materials` | Get available print materials |
+| POST | `/printing/validate` | Validate mesh for 3D printing |
+| POST | `/printing/convert-to-mesh` | Convert point cloud to printable mesh |
+| POST | `/printing/export` | Export as STL/3MF for printing |
+| POST | `/printing/generate-and-export` | One-step text-to-printable-file |
+
 
 ## 🎯 Technology Stack
 

@@ -1,14 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { DesignViewer } from './components/DesignViewer';
-import { PointCloudViewer } from './components/PointCloudViewer';
+import { MeshViewer } from './components/MeshViewer';
 import { Canvas } from '@react-three/fiber';
-import { PerspectiveCamera, OrbitControls, Environment, Stars } from '@react-three/drei';
+import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
 import {
   Send,
   Download,
   Activity,
   Layers,
-  Box,
   Menu,
   X,
   FileSpreadsheet,
@@ -37,10 +36,9 @@ function App() {
   const [designsHistory, setDesignsHistory] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'design' | 'audit' | 'metrics'>('design');
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'ai'; content: string }[]>([]);
-  const [pointCloud, setPointCloud] = useState<any[] | null>(null);
   const [generatingPoints, setGeneratingPoints] = useState(false);
-  const [viewMode, setViewMode] = useState<'schematic' | 'point-cloud'>('schematic');
-  const [pointQuality, setPointQuality] = useState<'fast' | 'normal' | 'high'>('normal');
+  const [viewMode, setViewMode] = useState<'schematic' | 'mesh'>('schematic');
+  const [meshUrl, setMeshUrl] = useState<string | null>(null);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -86,35 +84,6 @@ function App() {
     }
   };
 
-  const handleGeneratePoints = async () => {
-    if (!prompt) return;
-    setGeneratingPoints(true);
-    setViewMode('point-cloud');
-    try {
-      console.log("Requesting point cloud for:", prompt);
-      // Increased timeout to 300s (5 mins) as first-run requires downloading models (~500MB)
-      const response = await axios.post(`${API_URL}/generate-points`, { prompt, quality: pointQuality }, { timeout: 300000 });
-      console.log("Point cloud response:", response.data);
-      if (response.data && response.data.points && response.data.points.length > 0) {
-        setPointCloud(response.data.points);
-        setChatMessages(prev => [...prev, { role: 'ai', content: `Generated point cloud with ${response.data.count} points` }]);
-      } else {
-        throw new Error("No points generated");
-      }
-    } catch (error) {
-      console.error("Point generation error:", error);
-      const isTimeout = error instanceof Error && error.message.includes('timeout');
-      const errorMessage = isTimeout
-        ? "Point cloud generation timed out. This is expected on the first run as models (~500MB) are being downloaded. Please try again in 2-3 minutes."
-        : `Point cloud generation failed: ${error instanceof Error ? error.message : 'Unknown error'}\n\nNote: Point-E requires GPU and initial model download.`;
-
-      alert(errorMessage);
-      setViewMode('schematic');
-    } finally {
-      setGeneratingPoints(false);
-    }
-  };
-
   const downloadDXF = async () => {
     if (!design || !design.components || design.components.length === 0) {
       alert('Please generate a design first before exporting CAD.');
@@ -122,7 +91,6 @@ function App() {
     }
 
     if (design?.dxf_url) {
-      // Use existing DXF URL
       const link = document.createElement('a');
       link.href = `${API_URL}${design.dxf_url}`;
       link.setAttribute('download', `${design.id}.dxf`);
@@ -130,7 +98,6 @@ function App() {
       link.click();
       document.body.removeChild(link);
     } else {
-      // Generate export by re-calling generate endpoint
       try {
         const response = await axios.post(`${API_URL}/generate`, { prompt: 'regenerate current design' });
         if (response.data?.dxf_url) {
@@ -145,6 +112,42 @@ function App() {
         console.error('Export error:', error);
         alert('Failed to export CAD file. Please try generating a design first.');
       }
+    }
+  };
+
+  // Multi-model direct mesh generation (Shap-E or TripoSR)
+  const generateDirectMesh = async (method: 'auto' | 'shap-e' | 'triposr') => {
+    if (!prompt) {
+      alert('Please enter a description for the 3D model.');
+      return;
+    }
+
+    setGeneratingPoints(true);
+    setMeshUrl(null); // Clear previous mesh
+    setViewMode('mesh');
+    setChatMessages(prev => [...prev, { role: 'ai', content: `🔄 Generating high-quality mesh using ${method === 'auto' ? 'best available method' : method}...` }]);
+
+    try {
+      const response = await axios.post(`${API_URL}/generate-mesh`, {
+        prompt: prompt,
+        method: method
+      }, { timeout: 600000 });
+
+      if (response.data?.success) {
+        setChatMessages(prev => [...prev, {
+          role: 'ai',
+          content: `✅ ${response.data.message}\n\nMethod: ${response.data.method}\nVertices: ${response.data.vertices.toLocaleString()}\nFaces: ${response.data.faces.toLocaleString()}`
+        }]);
+
+        setMeshUrl(`${API_URL}${response.data.url}`);
+        setViewMode('mesh');
+      }
+    } catch (error) {
+      console.error('Direct mesh generation error:', error);
+      setChatMessages(prev => [...prev, { role: 'ai', content: `❌ Mesh generation failed. Make sure the backend is running with Shap-E installed.` }]);
+      setViewMode('schematic');
+    } finally {
+      setGeneratingPoints(false);
     }
   };
 
@@ -208,7 +211,6 @@ function App() {
               exit={{ x: -350, opacity: 0 }}
               className="w-80 border border-slate-800 bg-slate-900/60 backdrop-blur-xl rounded-xl flex flex-col overflow-hidden"
             >
-              {/* Tabs */}
               <div className="flex p-3 gap-2 border-b border-slate-800">
                 {['design', 'audit', 'metrics'].map(tab => (
                   <button
@@ -224,7 +226,6 @@ function App() {
                 ))}
               </div>
 
-              {/* Scrollable Content */}
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 {activeTab === 'design' && (
                   <div className="space-y-4">
@@ -245,39 +246,39 @@ function App() {
                       className="w-full py-3 bg-gradient-to-r from-blue-600 to-blue-500 text-white font-bold rounded-lg hover:shadow-lg hover:shadow-blue-500/50 disabled:opacity-50 transition-all"
                     >
                       {loading ? <Activity className="inline animate-spin mr-2" size={16} /> : <Zap className="inline mr-2" size={16} />}
-                      Generate Design
+                      Generate Layout
                     </button>
 
-                    <button
-                      onClick={handleGeneratePoints}
-                      disabled={generatingPoints}
-                      className="w-full py-3 bg-gradient-to-r from-purple-600 to-purple-500 text-white font-bold rounded-lg disabled:opacity-50 transition-all"
-                    >
-                      {generatingPoints ? <Activity className="inline animate-spin mr-2" size={16} /> : <Box className="inline mr-2" size={16} />}
-                      3D Point Cloud
-                    </button>
-
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-400">Quality</label>
-                      <div className="grid grid-cols-3 gap-2">
-                        {(['fast', 'normal', 'high'] as const).map(q => (
-                          <button
-                            key={q}
-                            onClick={() => setPointQuality(q)}
-                            className={`py-2 px-2 rounded-lg text-xs font-bold transition-all ${pointQuality === q ? 'bg-blue-600 text-white' : 'bg-slate-800 hover:bg-slate-700'}`}
-                          >
-                            {q}
-                          </button>
-                        ))}
-                      </div>
+                    <div className="grid grid-cols-1 gap-2">
+                      <button
+                        onClick={downloadDXF}
+                        className="w-full py-2.5 bg-slate-800 text-white rounded-lg border border-slate-700 hover:bg-slate-700 transition-all flex items-center justify-center gap-2 text-xs font-bold"
+                      >
+                        <Download size={14} /> Export CAD (.dxf)
+                      </button>
                     </div>
 
-                    <button
-                      onClick={downloadDXF}
-                      className="w-full py-2.5 bg-slate-800 text-white rounded-lg border border-slate-700 hover:bg-slate-700 transition-all flex items-center justify-center gap-2"
-                    >
-                      <Download size={16} /> Export CAD
-                    </button>
+                    <div className="mt-3 pt-3 border-t border-slate-700/50">
+                      <label className="text-xs font-bold text-emerald-400 block mb-2">🚀 Advanced Mesh Gen</label>
+                      <p className="text-xs text-slate-500 mb-2">High-fidelity 3D modeling (Clearer models)</p>
+
+                      <div className="grid grid-cols-2 gap-2 mb-2">
+                        <button
+                          onClick={() => generateDirectMesh('triposr')}
+                          disabled={!prompt || generatingPoints}
+                          className="py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-500 hover:to-teal-500 transition-all flex items-center justify-center gap-1.5 text-xs font-bold disabled:opacity-50"
+                        >
+                          ⚡ TripoSR (HD)
+                        </button>
+                        <button
+                          onClick={() => generateDirectMesh('shap-e')}
+                          disabled={!prompt || generatingPoints}
+                          className="py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-500 hover:to-indigo-500 transition-all flex items-center justify-center gap-1.5 text-xs font-bold disabled:opacity-50"
+                        >
+                          🎨 Shap-E
+                        </button>
+                      </div>
+                    </div>
 
                     {designsHistory.length > 0 && (
                       <div className="mt-4 pt-4 border-t border-slate-700">
@@ -333,7 +334,6 @@ function App() {
                 )}
               </div>
 
-              {/* Bottom Actions */}
               <div className="p-3 border-t border-slate-800 space-y-2">
                 <button onClick={() => setShowBOM(!showBOM)} className="w-full py-2.5 bg-slate-800 text-white rounded-lg border border-slate-700 hover:bg-slate-700 font-medium text-sm flex items-center justify-center gap-2">
                   <FileSpreadsheet size={16} /> BOM
@@ -345,31 +345,49 @@ function App() {
 
         {/* Center - Canvas Area */}
         <div className="flex-1 flex flex-col gap-3 overflow-hidden">
-          <div className="flex-1 border border-slate-800 bg-slate-900/60 backdrop-blur-xl rounded-xl overflow-hidden">
-            {viewMode === 'point-cloud' && pointCloud ? (
-              <div className="w-full h-full relative">
-                <Canvas shadows dpr={[1, 2]}>
-                  <PerspectiveCamera makeDefault position={[0, 0, 60]} fov={35} />
-                  <OrbitControls makeDefault />
-                  <Environment preset="city" />
-                  <ambientLight intensity={0.4} />
-                  <pointLight position={[30, 30, 30]} intensity={1.5} color="#38bdf8" />
-                  <Stars radius={100} depth={30} count={1000} factor={4} saturation={0} />
-                  <PointCloudViewer points={pointCloud} />
+          <div className="flex-1 border border-slate-800 bg-slate-900/60 backdrop-blur-xl rounded-xl overflow-hidden relative">
+            {generatingPoints ? (
+              <div className="h-full w-full flex flex-col items-center justify-center bg-slate-900/80 backdrop-blur-sm z-20">
+                <div className="w-16 h-16 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mb-4" />
+                <p className="text-blue-400 font-bold animate-pulse text-lg">Generating 3D Engineering Mesh...</p>
+                <p className="text-slate-500 text-sm mt-2">Orchestrating AI models for high-fidelity output</p>
+              </div>
+            ) : viewMode === 'mesh' && meshUrl ? (
+              <>
+                <Canvas shadows dpr={[1, 2]} style={{ background: '#0a0a1a' }}>
+                  <PerspectiveCamera makeDefault position={[3, 2, 3]} fov={50} />
+                  <OrbitControls enableZoom enablePan enableRotate autoRotate autoRotateSpeed={0.5} />
+                  <ambientLight intensity={1.2} />
+                  <pointLight position={[10, 10, 10]} intensity={2.5} color="#ffffff" castShadow />
+                  <pointLight position={[-10, 5, -10]} intensity={1.5} color="#ffffff" />
+                  <pointLight position={[0, -10, 0]} intensity={1.0} color="#88ccff" />
+                  <directionalLight position={[5, 10, 5]} intensity={2} color="#ffffff" />
+                  <directionalLight position={[-5, 5, -5]} intensity={1} color="#aaddff" />
+                  <MeshViewer url={meshUrl} color="#60a5fa" />
+                  <gridHelper args={[20, 40, '#1e3a5f', '#0f172a']} position={[0, -1.01, 0]} />
                 </Canvas>
                 <button
                   onClick={() => setViewMode('schematic')}
-                  className="absolute top-4 right-4 px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg font-medium hover:bg-slate-800 transition-colors"
+                  className="absolute top-4 right-4 px-4 py-2 bg-slate-900/90 border border-slate-700 rounded-lg font-medium hover:bg-slate-800 transition-colors z-10 text-xs"
                 >
                   Back to Design
                 </button>
-              </div>
+                <div className="absolute bottom-4 left-4 px-3 py-2 bg-slate-900/90 border border-slate-700 rounded-lg text-xs text-slate-300">
+                  🎨 Mesh loaded | Drag to rotate, scroll to zoom
+                </div>
+                <a
+                  href={meshUrl}
+                  download
+                  className="absolute bottom-4 right-4 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-xs text-white font-bold z-10"
+                >
+                  📥 Download STL
+                </a>
+              </>
             ) : (
               <DesignViewer components={design?.components || []} onSelectComponent={setSelectedComp} />
             )}
           </div>
 
-          {/* Status Bar */}
           <div className="px-4 py-2 bg-slate-900/60 backdrop-blur-xl rounded-lg border border-slate-800 flex justify-between items-center text-xs text-slate-400">
             <span>Status: <span className="text-green-400">Active</span></span>
             <span>{design?.id || 'No Design'}</span>
@@ -385,7 +403,6 @@ function App() {
               exit={{ x: 400, opacity: 0 }}
               className="w-96 border border-slate-800 bg-slate-900/60 backdrop-blur-xl rounded-xl flex flex-col overflow-hidden"
             >
-              {/* Chat Header */}
               <div className="p-4 border-b border-slate-800 bg-gradient-to-r from-blue-500/10 to-transparent flex justify-between items-start">
                 <div className="flex items-center gap-2">
                   <Sparkles className="text-blue-400" size={18} />
@@ -399,7 +416,6 @@ function App() {
                 </button>
               </div>
 
-              {/* Messages */}
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 {chatMessages.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-center p-4">
@@ -432,7 +448,6 @@ function App() {
                 )}
               </div>
 
-              {/* Input */}
               <div className="p-3 border-t border-slate-800 space-y-2">
                 <input
                   type="text"
@@ -455,7 +470,6 @@ function App() {
         </AnimatePresence>
       </div>
 
-      {/* BOM Modal */}
       <AnimatePresence>
         {showBOM && (
           <motion.div

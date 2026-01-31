@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 import os
@@ -12,11 +13,16 @@ from engine import EngineeringEngine, check_flow_compliance, estimate_power_kw, 
 from exporter import DXFExporter
 from bim_handler import bim_handler
 from dotenv import load_dotenv
-from point_e_service import PointEService
+# Import Tripo AI service (replaces Point-E)
+from tripo_service import TripoService, get_tripo_service
 from openscad_service import OpenSCADService
 from multimodel_service import get_multimodel_service, MultiModelService
+from print_service import get_print_service, PrintService, PrintOptimizer, PRINTER_PROFILES, PRINT_MATERIALS
 
 load_dotenv()
+
+# Global Tripo service
+tripo_service: Optional[TripoService] = None
 
 
 def generate_smart_synthetic_points(prompt: str, num_points: int = 8192) -> List[Dict]:
@@ -43,9 +49,15 @@ def generate_smart_synthetic_points(prompt: str, num_points: int = 8192) -> List
     elif any(word in prompt_lower for word in ['torus', 'donut', 'ring', 'wheel', 'tire']):
         points = generate_torus_points(num_points)
         color = (0.8, 0.4, 0.8)  # Purple
+    elif any(word in prompt_lower for word in ['train', 'locomotive', 'railway', 'railroad']):
+        points = generate_train_points(num_points)
+        color = (0.3, 0.3, 0.35)  # Dark metal
     elif any(word in prompt_lower for word in ['car', 'vehicle', 'truck', 'auto']):
         points = generate_car_points(num_points)
         color = (0.2, 0.5, 0.9)  # Blue
+    elif any(word in prompt_lower for word in ['boat', 'ship', 'yacht', 'vessel']):
+        points = generate_boat_points(num_points)
+        color = (0.9, 0.9, 0.95)  # White
     elif any(word in prompt_lower for word in ['house', 'building', 'home']):
         points = generate_house_points(num_points)
         color = (0.8, 0.6, 0.4)  # Brown
@@ -441,6 +453,181 @@ def generate_airplane_points(n: int) -> List[tuple]:
     return points
 
 
+def generate_train_points(n: int) -> List[tuple]:
+    """Generate points for a detailed train/locomotive shape - surface only for clear mesh."""
+    points = []
+    
+    # Helper function to generate box surface points
+    def box_surface(cx, cy, cz, sx, sy, sz, count):
+        pts = []
+        faces = [
+            ('x', sx/2), ('x', -sx/2),
+            ('y', sy/2), ('y', -sy/2),
+            ('z', sz/2), ('z', -sz/2)
+        ]
+        per_face = count // 6
+        for axis, offset in faces:
+            for _ in range(per_face):
+                if axis == 'x':
+                    pts.append((cx + offset, cy + random.uniform(-sy/2, sy/2), cz + random.uniform(-sz/2, sz/2)))
+                elif axis == 'y':
+                    pts.append((cx + random.uniform(-sx/2, sx/2), cy + offset, cz + random.uniform(-sz/2, sz/2)))
+                else:
+                    pts.append((cx + random.uniform(-sx/2, sx/2), cy + random.uniform(-sy/2, sy/2), cz + offset))
+        return pts
+    
+    # Helper function to generate cylinder surface points
+    def cylinder_surface(cx, cy, cz, radius, height, count, axis='y'):
+        pts = []
+        n_side = int(count * 0.8)
+        n_cap = (count - n_side) // 2
+        
+        for _ in range(n_side):
+            theta = random.uniform(0, 2 * math.pi)
+            h = random.uniform(-height/2, height/2)
+            if axis == 'y':
+                pts.append((cx + radius * math.cos(theta), cy + h, cz + radius * math.sin(theta)))
+            elif axis == 'x':
+                pts.append((cx + h, cy + radius * math.cos(theta), cz + radius * math.sin(theta)))
+            else:
+                pts.append((cx + radius * math.cos(theta), cy + radius * math.sin(theta), cz + h))
+        
+        for _ in range(n_cap):
+            theta = random.uniform(0, 2 * math.pi)
+            r = random.uniform(0, radius)
+            if axis == 'y':
+                pts.append((cx + r * math.cos(theta), cy + height/2, cz + r * math.sin(theta)))
+                pts.append((cx + r * math.cos(theta), cy - height/2, cz + r * math.sin(theta)))
+        return pts
+    
+    # Main locomotive body
+    points.extend(box_surface(0, 0.6, 0, 2.0, 0.6, 0.8, int(n * 0.3)))
+    
+    # Locomotive nose (front wedge using triangular surface)
+    n_nose = int(n * 0.1)
+    for _ in range(n_nose):
+        x = random.uniform(1.0, 1.4)
+        progress = (x - 1.0) / 0.4
+        max_y = 0.9 - 0.4 * progress
+        max_z = 0.4 - 0.25 * progress
+        # Surface only - on the sloped face
+        y = 0.3 + random.uniform(0, max_y - 0.3)
+        z = random.uniform(-max_z, max_z)
+        points.append((x, y, z))
+    
+    # Cabin (control room) - box on top
+    points.extend(box_surface(-0.4, 1.1, 0, 0.8, 0.4, 0.7, int(n * 0.12)))
+    
+    # Windows on cabin (indentations represented as darker points)
+    n_windows = int(n * 0.03)
+    for _ in range(n_windows):
+        x = random.uniform(-0.7, -0.1)
+        y = random.uniform(1.0, 1.2)
+        z = random.choice([-0.36, 0.36])
+        points.append((x, y, z))
+    
+    # 6 Wheels (detailed cylinders)
+    wheel_positions = [(-0.7, -0.45), (-0.7, 0.45), (0.0, -0.45), (0.0, 0.45), (0.7, -0.45), (0.7, 0.45)]
+    n_per_wheel = int(n * 0.06)
+    for wx, wz in wheel_positions:
+        points.extend(cylinder_surface(wx, 0.2, wz, 0.2, 0.08, n_per_wheel, axis='z'))
+    
+    # Smokestack (cylinder)
+    points.extend(cylinder_surface(0.6, 1.1, 0, 0.1, 0.4, int(n * 0.05), axis='y'))
+    
+    # Cowcatcher (front plow)
+    n_cow = int(n * 0.05)
+    for _ in range(n_cow):
+        x = random.uniform(1.3, 1.5)
+        y = random.uniform(0.1, 0.35)
+        z = random.uniform(-0.3 * (1.5 - x) / 0.2, 0.3 * (1.5 - x) / 0.2)
+        points.append((x, y, z))
+    
+    # Undercarriage/chassis
+    points.extend(box_surface(0, 0.25, 0, 2.0, 0.1, 0.9, int(n * 0.08)))
+    
+    # Headlight
+    n_light = int(n * 0.02)
+    for _ in range(n_light):
+        theta = random.uniform(0, 2 * math.pi)
+        phi = random.uniform(0, math.pi/2)
+        r = 0.08
+        x = 1.4 + r * math.cos(phi)
+        y = 0.75 + r * math.sin(phi) * math.sin(theta)
+        z = r * math.sin(phi) * math.cos(theta)
+        points.append((x, y, z))
+    
+    # Fill remaining points with details
+    remaining = n - len(points)
+    for _ in range(max(0, remaining)):
+        # Add rivets/details on main body surface
+        x = random.uniform(-0.95, 0.95)
+        y = random.choice([0.3, 0.9])  # Top or bottom edge
+        z = random.uniform(-0.38, 0.38)
+        points.append((x, y, z))
+    
+    return points
+
+
+def generate_boat_points(n: int) -> List[tuple]:
+    """Generate points for a boat/ship shape."""
+    points = []
+    
+    # Hull (elongated with curved bottom)
+    n_hull = int(n * 0.5)
+    for _ in range(n_hull):
+        x = random.uniform(-1.5, 1.5)
+        progress = abs(x) / 1.5
+        width = 0.6 * (1 - progress * 0.4)  # Narrower at ends
+        z = random.uniform(-width, width)
+        
+        # Curved hull bottom
+        depth = 0.4 * (1 - (z / width) ** 2) if width > 0 else 0
+        y = random.uniform(-depth, 0.1)
+        points.append((x, y, z))
+    
+    # Deck
+    n_deck = int(n * 0.2)
+    for _ in range(n_deck):
+        x = random.uniform(-1.3, 1.3)
+        progress = abs(x) / 1.3
+        width = 0.55 * (1 - progress * 0.3)
+        z = random.uniform(-width, width)
+        y = random.uniform(0.1, 0.15)
+        points.append((x, y, z))
+    
+    # Cabin/superstructure
+    n_cabin = int(n * 0.15)
+    for _ in range(n_cabin):
+        x = random.uniform(-0.5, 0.3)
+        y = random.uniform(0.15, 0.6)
+        z = random.uniform(-0.3, 0.3)
+        if random.random() < 0.3:
+            y = random.choice([0.15, 0.6])
+        points.append((x, y, z))
+    
+    # Mast
+    n_mast = int(n * 0.08)
+    for _ in range(n_mast):
+        theta = random.uniform(0, 2 * math.pi)
+        r = 0.03
+        y = random.uniform(0.3, 1.2)
+        x = 0.0 + r * math.cos(theta)
+        z = r * math.sin(theta)
+        points.append((x, y, z))
+    
+    # Bow details
+    n_bow = n - n_hull - n_deck - n_cabin - n_mast
+    for _ in range(n_bow):
+        x = random.uniform(1.3, 1.6)
+        progress = (x - 1.3) / 0.3
+        y = random.uniform(-0.1 * (1 - progress), 0.2 * (1 - progress))
+        z = random.uniform(-0.1 * (1 - progress), 0.1 * (1 - progress))
+        points.append((x, y, z))
+    
+    return points
+
+
 def generate_composite_shape(prompt: str, n: int) -> List[tuple]:
     """Generate a composite 3D shape for unrecognized prompts."""
     points = []
@@ -483,7 +670,7 @@ def generate_composite_shape(prompt: str, n: int) -> List[tuple]:
     
     return points
 
-app = FastAPI(title="Aether-Gen API", version="2.0.0 - Multi-Model")
+app = FastAPI(title="Aether-Gen API", version="2.5.0 - Multi-Model + 3D Printing")
 
 app.add_middleware(
     CORSMiddleware,
@@ -497,6 +684,7 @@ engine = EngineeringEngine()
 point_e_service = None # Lazy load only if requested to save VRAM initially
 openscad_service = None # Lazy load OpenSCAD/CADAM service
 multimodel_service = None # Lazy load multi-model service
+print_service = None  # Lazy load 3D printing service
 
 class DesignRequest(BaseModel):
     prompt: str
@@ -508,16 +696,176 @@ class PointCloudRequest(BaseModel):
 
 class ExportPointCloudRequest(BaseModel):
     points: List[Dict]
-    format: str = 'ply'  # 'ply', 'obj', or 'json'
+    format: str = 'ply'  # 'ply', 'obj', 'json', 'stl', or '3mf'
     filename: str = 'point_cloud'
 
 class ConsultRequest(BaseModel):
     design: Dict
     message: str
 
+# 3D Printing Request Models
+class PrintableModelRequest(BaseModel):
+    points: List[Dict]
+    target_size_mm: float = 100.0
+    mesh_method: str = 'voxel'  # 'voxel', 'alpha_shape', 'convex', 'ball_pivot'
+    mesh_resolution: int = 64
+    printer: str = 'generic'  # Printer profile key
+    material: str = 'pla'  # Material key
+    optimize_orientation: bool = True
+    densify: bool = True
+    smooth: bool = True
+
+class ExportPrintableRequest(BaseModel):
+    points: List[Dict]
+    format: str = 'stl'  # 'stl' or '3mf'
+    filename: str = 'print_model'
+    target_size_mm: float = 100.0
+    mesh_method: str = 'voxel'
+    mesh_resolution: int = 64
+    binary_stl: bool = True
+
+class PrintValidationRequest(BaseModel):
+    points: List[Dict]
+    target_size_mm: float = 100.0
+    printer: str = 'generic'
+    material: str = 'pla'
+
 @app.get("/")
 async def health_check():
-    return {"status": "ok", "message": "AETHER-GEN Multi-Model Backend is running", "version": "2.0.0"}
+    return {"status": "ok", "message": "AETHER-GEN Tripo AI + 3D Generation Backend is running", "version": "3.0.0"}
+
+
+# ============== TRIPO AI ENDPOINTS ==============
+
+class TripoTextRequest(BaseModel):
+    prompt: str
+    model_version: str = "v2.0-20240919"
+    negative_prompt: Optional[str] = None
+    face_limit: int = 50000
+    texture: bool = True
+    pbr: bool = True
+    output_format: str = "glb"
+
+
+class TripoImageRequest(BaseModel):
+    image_url: Optional[str] = None
+    image_base64: Optional[str] = None
+    model_version: str = "v2.0-20240919"
+    face_limit: int = 50000
+    texture: bool = True
+    pbr: bool = True
+    output_format: str = "glb"
+
+
+@app.post("/tripo/text-to-3d")
+async def tripo_text_to_3d(request: TripoTextRequest):
+    """
+    Generate a high-quality 3D model from text using Tripo AI.
+    Requires TRIPO_API_KEY environment variable.
+    """
+    global tripo_service
+    
+    if tripo_service is None:
+        tripo_service = get_tripo_service()
+    
+    if not tripo_service.api_key:
+        raise HTTPException(
+            status_code=400, 
+            detail="TRIPO_API_KEY not configured. Please set your API key."
+        )
+    
+    try:
+        print(f"🚀 Tripo AI: Generating 3D from text: '{request.prompt}'")
+        
+        result = await tripo_service.text_to_3d(
+            prompt=request.prompt,
+            model_version=request.model_version,
+            negative_prompt=request.negative_prompt,
+            face_limit=request.face_limit,
+            texture=request.texture,
+            pbr=request.pbr,
+            output_format=request.output_format
+        )
+        
+        if result.get("status") == "success":
+            local_path = result.get("local_path")
+            if local_path:
+                result["download_url"] = f"/exports/{os.path.basename(local_path)}"
+            return result
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Generation failed"))
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Tripo text-to-3d error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/tripo/image-to-3d")
+async def tripo_image_to_3d(request: TripoImageRequest):
+    """
+    Generate a high-quality 3D model from an image using Tripo AI.
+    Requires TRIPO_API_KEY environment variable.
+    """
+    global tripo_service
+    
+    if tripo_service is None:
+        tripo_service = get_tripo_service()
+    
+    if not tripo_service.api_key:
+        raise HTTPException(
+            status_code=400, 
+            detail="TRIPO_API_KEY not configured. Please set your API key."
+        )
+    
+    if not request.image_url and not request.image_base64:
+        raise HTTPException(status_code=400, detail="Either image_url or image_base64 is required")
+    
+    try:
+        print(f"🚀 Tripo AI: Generating 3D from image...")
+        
+        result = await tripo_service.image_to_3d(
+            image_url=request.image_url,
+            image_base64=request.image_base64,
+            model_version=request.model_version,
+            face_limit=request.face_limit,
+            texture=request.texture,
+            pbr=request.pbr,
+            output_format=request.output_format
+        )
+        
+        if result.get("status") == "success":
+            local_path = result.get("local_path")
+            if local_path:
+                result["download_url"] = f"/exports/{os.path.basename(local_path)}"
+            return result
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Generation failed"))
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Tripo image-to-3d error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/tripo/balance")
+async def tripo_balance():
+    """Get Tripo AI API balance/credits."""
+    global tripo_service
+    
+    if tripo_service is None:
+        tripo_service = get_tripo_service()
+    
+    if not tripo_service.api_key:
+        raise HTTPException(status_code=400, detail="TRIPO_API_KEY not configured")
+    
+    balance = await tripo_service.get_balance()
+    return balance
+
+
+# ============== END TRIPO AI ENDPOINTS ==============
 
 @app.post("/generate")
 async def generate_design(request: DesignRequest):
@@ -729,6 +1077,187 @@ async def generate_points(request: PointCloudRequest):
         print(f"❌ ERROR in point cloud generation: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+class MeshRequest(BaseModel):
+    prompt: str
+    method: str = 'auto'  # 'auto', 'tripo', 'openscad', 'synthetic'
+    mesh_resolution: int = 64
+    use_texture: bool = True
+    use_pbr: bool = True
+
+
+@app.post("/generate-mesh")
+async def generate_mesh(request: MeshRequest):
+    """
+    Generate a 3D mesh from a text prompt using Tripo AI.
+    Falls back to synthetic generation if Tripo is unavailable.
+    """
+    global print_service, tripo_service
+    
+    try:
+        print(f"🎨 Generating mesh for prompt: '{request.prompt}'")
+        print(f"📦 Method: {request.method}")
+        
+        # Initialize Tripo service if needed
+        if tripo_service is None:
+            tripo_service = get_tripo_service()
+        
+        mesh_path = None
+        mesh_filename = None
+        method_used = request.method
+        
+        # Try Tripo AI first (unless synthetic is explicitly requested)
+        if request.method in ['auto', 'tripo'] and tripo_service.api_key:
+            print("🚀 Using Tripo AI for 3D generation...")
+            
+            try:
+                result = await tripo_service.text_to_3d(
+                    prompt=request.prompt,
+                    texture=request.use_texture,
+                    pbr=request.use_pbr,
+                    face_limit=50000
+                )
+                
+                if result.get("status") == "success":
+                    # Get the GLB file path
+                    glb_path = result.get("local_path")
+                    
+                    if glb_path and os.path.exists(glb_path):
+                        # Convert GLB to STL for frontend compatibility
+                        mesh_id = str(uuid.uuid4())[:8]
+                        mesh_filename = f"tripo_{mesh_id}.stl"
+                        mesh_path = os.path.join("exports", mesh_filename)
+                        os.makedirs("exports", exist_ok=True)
+                        
+                        if tripo_service.convert_to_stl(glb_path, mesh_path):
+                            method_used = "tripo"
+                            print(f"✅ Tripo AI mesh generated and converted to STL")
+                        else:
+                            # Keep GLB if STL conversion fails
+                            mesh_filename = os.path.basename(glb_path)
+                            mesh_path = glb_path
+                            method_used = "tripo"
+                            print(f"⚠️ STL conversion failed, using GLB format")
+                    else:
+                        print(f"⚠️ Tripo succeeded but no local file. Falling back to synthetic.")
+                        mesh_path = None
+                else:
+                    error_msg = result.get("error", "Unknown error")
+                    print(f"⚠️ Tripo AI generation failed: {error_msg}. Falling back to synthetic.")
+                    mesh_path = None
+                    
+            except Exception as tripo_error:
+                print(f"⚠️ Tripo AI error: {tripo_error}. Falling back to synthetic.")
+                mesh_path = None
+        
+        # Fallback to synthetic generation if Tripo is not available or failed
+        if mesh_path is None or not os.path.exists(mesh_path):
+            print("🔧 Using synthetic point cloud generation...")
+            method_used = "synthetic"
+            
+            # Step 1: Generate point cloud
+            point_request = PointCloudRequest(
+                prompt=request.prompt,
+                quality='high',
+                method='synthetic'
+            )
+            
+            # Call generate_points internally
+            point_result = await generate_points(point_request)
+            points = point_result.get('points', [])
+            
+            if not points or len(points) < 100:
+                raise HTTPException(status_code=500, detail="Failed to generate sufficient points")
+            
+            print(f"✅ Generated {len(points)} points, converting to mesh...")
+            
+            # Step 2: Convert point cloud to mesh using print_service
+            if print_service is None:
+                print("🔧 Initializing 3D Print Service...")
+                print_service = get_print_service()
+            
+            # Convert points to the format expected by print_service (x, y, z format)
+            point_array = []
+            for p in points:
+                if 'x' in p:
+                    point_array.append({'x': p['x'], 'y': p['y'], 'z': p['z']})
+                elif 'pos' in p:
+                    point_array.append({'x': p['pos'][0], 'y': p['pos'][1], 'z': p['pos'][2]})
+                else:
+                    continue  # Skip invalid points
+            
+            if len(point_array) < 100:
+                raise HTTPException(status_code=500, detail="Not enough valid points for mesh generation")
+            
+            # Generate mesh using ball_pivot for better surface preservation
+            vertices, faces = print_service.point_cloud_to_mesh(
+                point_array,
+                method='ball_pivot',
+                resolution=request.mesh_resolution
+            )
+            
+            if len(vertices) == 0 or len(faces) == 0:
+                raise HTTPException(status_code=500, detail="Failed to generate mesh from points")
+            
+            print(f"✅ Generated mesh with {len(vertices)} vertices and {len(faces)} faces")
+            
+            # Step 3: Export mesh to binary STL file
+            import struct
+            import numpy as np
+            
+            mesh_id = str(uuid.uuid4())[:8]
+            mesh_filename = f"mesh_{mesh_id}.stl"
+            mesh_path = os.path.join("exports", mesh_filename)
+            os.makedirs("exports", exist_ok=True)
+            
+            vertices_arr = np.array(vertices)
+            faces_arr = np.array(faces)
+            
+            with open(mesh_path, 'wb') as f:
+                header = f"Generated mesh for: {request.prompt[:60]}"
+                f.write(header.encode('utf-8').ljust(80, b'\0'))
+                
+                num_triangles = len(faces_arr)
+                f.write(struct.pack('<I', num_triangles))
+                
+                for face in faces_arr:
+                    v0 = vertices_arr[face[0]]
+                    v1 = vertices_arr[face[1]]
+                    v2 = vertices_arr[face[2]]
+                    
+                    edge1 = v1 - v0
+                    edge2 = v2 - v0
+                    normal = np.cross(edge1, edge2)
+                    norm_len = np.linalg.norm(normal)
+                    if norm_len > 0:
+                        normal = normal / norm_len
+                    else:
+                        normal = np.array([0, 0, 1])
+                    
+                    f.write(struct.pack('<fff', *normal))
+                    f.write(struct.pack('<fff', *v0))
+                    f.write(struct.pack('<fff', *v1))
+                    f.write(struct.pack('<fff', *v2))
+                    f.write(struct.pack('<H', 0))
+        
+        print(f"✅ Mesh saved to {mesh_path}")
+        
+        return {
+            "success": True,
+            "message": f"Generated 3D mesh from '{request.prompt}'",
+            "method": method_used,
+            "url": f"/exports/{mesh_filename}"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Mesh generation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/export-point-cloud")
 async def export_point_cloud(request: ExportPointCloudRequest):
     """Export point cloud to various formats (PLY, OBJ, JSON)."""
@@ -771,6 +1300,286 @@ async def consult_design(request: ConsultRequest):
         response = await engine.consult_design(request.design, request.message)
         return {"response": response}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============= 3D PRINTING ENDPOINTS =============
+
+@app.get("/printing/printers")
+async def get_printer_profiles():
+    """Get available 3D printer profiles."""
+    return {
+        "printers": {k: v for k, v in PRINTER_PROFILES.items()},
+        "default": "generic"
+    }
+
+@app.get("/printing/materials")
+async def get_print_materials():
+    """Get available print materials."""
+    return {
+        "materials": {k: v for k, v in PRINT_MATERIALS.items()},
+        "default": "pla"
+    }
+
+@app.post("/printing/validate")
+async def validate_for_printing(request: PrintValidationRequest):
+    """
+    Validate a point cloud for 3D printing.
+    Returns printability analysis, estimated print time, and material usage.
+    """
+    global print_service
+    
+    try:
+        if print_service is None:
+            print_service = get_print_service()
+        
+        # Set printer and material
+        print_service.set_printer(request.printer)
+        print_service.set_material(request.material)
+        
+        # Convert to mesh
+        print("🔧 Converting point cloud to mesh for validation...")
+        vertices, faces = print_service.point_cloud_to_mesh(
+            request.points, 
+            method='voxel', 
+            resolution=48  # Lower resolution for quick validation
+        )
+        
+        # Scale to target size
+        vertices = print_service.scale_for_printing(vertices, request.target_size_mm)
+        
+        # Validate
+        validation = print_service.validate_for_printing(vertices, faces, request.target_size_mm)
+        
+        return {
+            "success": True,
+            "validation": validation,
+            "printer": request.printer,
+            "material": request.material
+        }
+        
+    except Exception as e:
+        print(f"❌ Validation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/printing/convert-to-mesh")
+async def convert_to_printable_mesh(request: PrintableModelRequest):
+    """
+    Convert point cloud to print-ready mesh.
+    Applies densification, smoothing, and orientation optimization.
+    """
+    global print_service
+    
+    try:
+        if print_service is None:
+            print_service = get_print_service()
+        
+        print_service.set_printer(request.printer)
+        print_service.set_material(request.material)
+        
+        points = request.points
+        
+        # Pre-processing
+        if request.densify:
+            print("📈 Densifying point cloud...")
+            target_count = max(len(points) * 2, 16384)
+            points = PrintOptimizer.densify_point_cloud(points, target_count)
+        
+        if request.smooth:
+            print("✨ Smoothing point cloud...")
+            points = PrintOptimizer.smooth_point_cloud(points, iterations=2)
+        
+        # Convert to mesh
+        print(f"🔧 Converting to mesh (method={request.mesh_method}, resolution={request.mesh_resolution})...")
+        vertices, faces = print_service.point_cloud_to_mesh(
+            points,
+            method=request.mesh_method,
+            resolution=request.mesh_resolution
+        )
+        
+        # Scale for printing
+        vertices = print_service.scale_for_printing(vertices, request.target_size_mm)
+        
+        # Optimize orientation
+        orientation_info = None
+        if request.optimize_orientation:
+            print("🔄 Optimizing print orientation...")
+            vertices, orientation_info = PrintOptimizer.orient_for_printing(vertices, faces)
+        
+        # Validate
+        validation = print_service.validate_for_printing(vertices, faces, request.target_size_mm)
+        
+        return {
+            "success": True,
+            "mesh": {
+                "vertices": vertices.tolist(),
+                "faces": faces.tolist(),
+                "vertex_count": len(vertices),
+                "face_count": len(faces)
+            },
+            "validation": validation,
+            "orientation": orientation_info,
+            "settings": {
+                "target_size_mm": request.target_size_mm,
+                "mesh_method": request.mesh_method,
+                "mesh_resolution": request.mesh_resolution,
+                "printer": request.printer,
+                "material": request.material
+            }
+        }
+        
+    except Exception as e:
+        print(f"❌ Mesh conversion error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/printing/export")
+async def export_for_printing(request: ExportPrintableRequest):
+    """
+    Export point cloud as print-ready STL or 3MF file.
+    """
+    global print_service
+    
+    try:
+        if print_service is None:
+            print_service = get_print_service()
+        
+        # Densify and smooth
+        points = PrintOptimizer.densify_point_cloud(request.points, 16384)
+        points = PrintOptimizer.smooth_point_cloud(points, iterations=2)
+        
+        # Convert to mesh
+        print(f"🔧 Converting to mesh for export...")
+        vertices, faces = print_service.point_cloud_to_mesh(
+            points,
+            method=request.mesh_method,
+            resolution=request.mesh_resolution
+        )
+        
+        # Scale for printing
+        vertices = print_service.scale_for_printing(vertices, request.target_size_mm)
+        
+        # Optimize orientation
+        vertices, _ = PrintOptimizer.orient_for_printing(vertices, faces)
+        
+        # Sanitize filename
+        safe_filename = "".join(c if c.isalnum() or c in '-_' else '_' for c in request.filename)
+        
+        # Export
+        if request.format.lower() == 'stl':
+            filepath = print_service.export_stl(
+                vertices, faces, safe_filename, 
+                binary=request.binary_stl
+            )
+        elif request.format.lower() == '3mf':
+            filepath = print_service.export_3mf(
+                vertices, faces, safe_filename,
+                metadata={'title': request.filename}
+            )
+        else:
+            raise ValueError(f"Unsupported format: {request.format}. Use 'stl' or '3mf'")
+        
+        # Validate
+        validation = print_service.validate_for_printing(vertices, faces, request.target_size_mm)
+        
+        return {
+            "success": True,
+            "filename": os.path.basename(filepath),
+            "url": f"/exports/{os.path.basename(filepath)}",
+            "format": request.format,
+            "mesh_stats": {
+                "vertices": len(vertices),
+                "faces": len(faces)
+            },
+            "validation": validation
+        }
+        
+    except Exception as e:
+        print(f"❌ Export error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/printing/generate-and-export")
+async def generate_and_export_printable(prompt: str, quality: str = 'high', 
+                                        printer: str = 'generic', 
+                                        target_size_mm: float = 100.0,
+                                        export_format: str = 'stl'):
+    """
+    One-step endpoint: Generate 3D model from text and export as print-ready file.
+    
+    Args:
+        prompt: Text description of the object
+        quality: Generation quality ('fast', 'normal', 'high', 'ultra')
+        printer: Target printer profile
+        target_size_mm: Size of longest dimension in mm
+        export_format: 'stl' or '3mf'
+    """
+    global multimodel_service, print_service
+    
+    try:
+        # Initialize services
+        if multimodel_service is None:
+            multimodel_service = get_multimodel_service()
+        if print_service is None:
+            print_service = get_print_service()
+        
+        print_service.set_printer(printer)
+        
+        # Generate point cloud
+        num_points = {'fast': 4096, 'normal': 8192, 'high': 16384, 'ultra': 32768}.get(quality, 16384)
+        print(f"🎨 Generating 3D model: '{prompt}' (quality={quality}, points={num_points})")
+        
+        points, metadata = await multimodel_service.generate_point_cloud(prompt, num_points, strategy='auto')
+        
+        if not points or len(points) < 100:
+            raise ValueError("Failed to generate sufficient points")
+        
+        print(f"✅ Generated {len(points)} points")
+        
+        # Prepare for printing
+        points = PrintOptimizer.densify_point_cloud(points, max(len(points), 16384))
+        points = PrintOptimizer.smooth_point_cloud(points, iterations=2)
+        
+        # Convert to mesh
+        vertices, faces = print_service.point_cloud_to_mesh(points, method='voxel', resolution=64)
+        vertices = print_service.scale_for_printing(vertices, target_size_mm)
+        vertices, orientation_info = PrintOptimizer.orient_for_printing(vertices, faces)
+        
+        # Export
+        safe_filename = "".join(c if c.isalnum() or c in '-_' else '_' for c in prompt[:30])
+        
+        if export_format.lower() == 'stl':
+            filepath = print_service.export_stl(vertices, faces, safe_filename, binary=True)
+        else:
+            filepath = print_service.export_3mf(vertices, faces, safe_filename, 
+                                                metadata={'title': prompt})
+        
+        validation = print_service.validate_for_printing(vertices, faces, target_size_mm)
+        
+        return {
+            "success": True,
+            "prompt": prompt,
+            "filename": os.path.basename(filepath),
+            "url": f"/exports/{os.path.basename(filepath)}",
+            "format": export_format,
+            "generation": {
+                "methods_used": metadata.get('methods_used', []),
+                "points_generated": len(points)
+            },
+            "mesh_stats": {
+                "vertices": len(vertices),
+                "faces": len(faces)
+            },
+            "validation": validation,
+            "orientation": orientation_info
+        }
+        
+    except Exception as e:
+        print(f"❌ Generate and export error: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 

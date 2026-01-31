@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Grid, Stars, Float, Text, ContactShadows, Environment } from '@react-three/drei';
 import * as THREE from 'three';
+import { PointCloudViewer } from './PointCloudViewer';
 
 interface ComponentProps {
     id: string;
@@ -191,11 +192,15 @@ const ModelComponent = ({ type, position, properties, name, isSelected, onSelect
 export const DesignViewer = ({
     components = [],
     onSelectComponent,
-    customContent = null
+    customContent = null,
+    pointCloud = null,
+    pointQuality = 'high'
 }: {
     components: any[],
     onSelectComponent?: (comp: any) => void,
-    customContent?: React.ReactNode
+    customContent?: React.ReactNode,
+    pointCloud?: Array<{ pos?: [number, number, number]; color?: [number, number, number]; x?: number; y?: number; z?: number; r?: number; g?: number; b?: number }> | null,
+    pointQuality?: 'fast' | 'normal' | 'high' | 'ultra'
 }) => {
     const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -203,6 +208,19 @@ export const DesignViewer = ({
         setSelectedId(comp.id);
         if (onSelectComponent) onSelectComponent(comp);
     };
+
+    // Convert point cloud to scaled positions for display
+    const scaledPointCloud = pointCloud ? pointCloud.map(p => {
+        const x = p.pos ? p.pos[0] : (p.x || 0);
+        const y = p.pos ? p.pos[1] : (p.y || 0);
+        const z = p.pos ? p.pos[2] : (p.z || 0);
+        return {
+            ...p,
+            x: x * 15,  // Scale up for visibility in the environment
+            y: y * 15 + 5,  // Lift above platform
+            z: z * 15
+        };
+    }) : null;
 
     return (
         <div className="w-full h-full min-h-[600px] rounded-3xl overflow-hidden glass-card relative bg-[#010409]">
@@ -304,6 +322,31 @@ export const DesignViewer = ({
                                 onSelect={() => handleSelect(c)}
                             />
                         ))
+                    )}
+                    {/* Render Point Cloud if provided */}
+                    {scaledPointCloud && scaledPointCloud.length > 0 && (
+                        <group position={[0, 5, 0]}>
+                            <PointCloudViewer points={scaledPointCloud} quality={pointQuality} />
+                            {/* Label for point cloud */}
+                            <Text
+                                position={[0, 12, 0]}
+                                fontSize={0.8}
+                                color="#38bdf8"
+                                anchorX="center"
+                                anchorY="middle"
+                            >
+                                3D Point Cloud Model
+                            </Text>
+                            <Text
+                                position={[0, 11, 0]}
+                                fontSize={0.4}
+                                color="#64748b"
+                                anchorX="center"
+                                anchorY="middle"
+                            >
+                                {scaledPointCloud.length.toLocaleString()} points
+                            </Text>
+                        </group>
                     )}
                     {customContent}
                 </group>

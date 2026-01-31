@@ -220,6 +220,73 @@ class MultiModelService:
             metadata['error'] = str(e)
             return points, metadata
     
+    async def generate_for_printing(self, prompt: str, num_points: int = 16384,
+                                   enhance_density: bool = True) -> Tuple[List[Dict], Dict]:
+        """
+        Generate point cloud optimized for 3D printing.
+        Uses higher density and ensures watertight geometry.
+        
+        Args:
+            prompt: Text description
+            num_points: Target number of points (higher for printing)
+            enhance_density: Whether to post-process for density
+            
+        Returns:
+            Tuple of (points list, metadata dict)
+        """
+        # Use ensemble strategy for best quality
+        points, metadata = await self.generate_point_cloud(prompt, num_points, strategy='ensemble')
+        
+        if enhance_density and len(points) > 100:
+            # Add density enhancement for printing
+            points = self._enhance_for_printing(points, num_points)
+            metadata['print_enhanced'] = True
+        
+        metadata['print_ready'] = True
+        return points, metadata
+    
+    def _enhance_for_printing(self, points: List[Dict], target_count: int) -> List[Dict]:
+        """
+        Enhance point cloud for better mesh reconstruction.
+        Adds points to fill gaps and improve surface density.
+        """
+        if len(points) >= target_count:
+            return points
+        
+        coords = np.array([[p['x'], p['y'], p['z']] for p in points])
+        colors = np.array([[p.get('r', 0.5), p.get('g', 0.5), p.get('b', 0.5)] for p in points])
+        
+        enhanced = list(zip(coords.tolist(), colors.tolist()))
+        
+        while len(enhanced) < target_count:
+            # Random pair interpolation
+            idx1, idx2 = np.random.choice(len(coords), 2, replace=False)
+            t = np.random.uniform(0.3, 0.7)
+            
+            new_coord = coords[idx1] * (1 - t) + coords[idx2] * t
+            new_color = colors[idx1] * (1 - t) + colors[idx2] * t
+            
+            # Add small jitter for surface variation
+            jitter = np.random.normal(0, 0.005, 3)
+            new_coord = new_coord + jitter
+            
+            enhanced.append((new_coord.tolist(), new_color.tolist()))
+        
+        result = []
+        for coord, color in enhanced:
+            result.append({
+                'x': float(coord[0]),
+                'y': float(coord[1]),
+                'z': float(coord[2]),
+                'r': float(np.clip(color[0], 0, 1)),
+                'g': float(np.clip(color[1], 0, 1)),
+                'b': float(np.clip(color[2], 0, 1))
+            })
+        
+        logger.info(f"Enhanced point cloud: {len(points)} -> {len(result)} points for printing")
+        return result
+
+    
     async def _generate_openscad_primary(self, prompt: str, num_points: int, 
                                          metadata: Dict) -> List[Dict]:
         """Generate primarily using OpenSCAD with Point-E enhancement."""

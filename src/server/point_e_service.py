@@ -239,10 +239,20 @@ class PointEService:
             })
         return points
     def get_point_cloud_mesh(self, point_cloud, level=0.5):
+        """Generate a mesh from a point cloud using marching cubes."""
         try:
             coords = np.array([p['pos'] for p in point_cloud])
             mesh = marching_cubes_mesh(self.device, coords, level=level)
-            return mesh
+            
+            # Extract vertices and faces for export
+            # marching_cubes_mesh in Point-E returns a mesh object with .verts and .faces
+            verts = mesh.verts
+            faces = mesh.faces
+            
+            return {
+                "verts": verts,
+                "faces": faces
+            }
         except Exception as e:
             logger.error(f"Mesh generation failed: {str(e)}")
             raise
